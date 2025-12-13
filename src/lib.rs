@@ -15,7 +15,7 @@ pub enum OnDrop {
 }
 
 #[derive(Debug)]
-struct PipelineConfigBuilder {
+struct CommandPipelineConfig {
     pipefail: bool,
     on_drop: OnDrop,
     stdin: Option<Stdio>,
@@ -29,14 +29,14 @@ struct PipelineConfig {
 }
 
 #[derive(Debug)]
-pub struct Pipeline {
+pub struct CommandPipeline {
     piped_commands: Vec<Command>,
     tail_command: Command,
-    config: PipelineConfigBuilder,
+    config: CommandPipelineConfig,
 }
 
 #[derive(Debug)]
-pub struct JoinHandle {
+pub struct Pipeline {
     piped_processes: Vec<Child>,
     // Not actually optional. This is needed because it implements drop.
     tail_process: Option<Child>,
@@ -47,7 +47,7 @@ pub struct JoinHandle {
     pub stderr: Option<ChildStderr>,
 }
 
-impl PipelineConfigBuilder {
+impl CommandPipelineConfig {
     pub fn new() -> Self {
         Self {
             pipefail: false,
@@ -58,18 +58,18 @@ impl PipelineConfigBuilder {
     }
 }
 
-impl Default for PipelineConfigBuilder {
+impl Default for CommandPipelineConfig {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Pipeline {
+impl CommandPipeline {
     pub fn new<S: AsRef<OsStr>>(program: S) -> Self {
         Self {
             piped_commands: Vec::new(),
             tail_command: Command::new(program),
-            config: PipelineConfigBuilder::new(),
+            config: CommandPipelineConfig::new(),
         }
     }
 
@@ -147,7 +147,7 @@ impl Pipeline {
         self
     }
 
-    pub fn spawn(&mut self) -> std::io::Result<JoinHandle> {
+    pub fn spawn(&mut self) -> std::io::Result<Pipeline> {
         fn post_error_wait_all(processes: Vec<Child>) {
             for mut process in processes {
                 let _ = process.wait();
@@ -198,7 +198,7 @@ impl Pipeline {
                     .take();
                 let stdout = tail_process.stdout.take();
                 let stderr = tail_process.stderr.take();
-                Ok(JoinHandle {
+                Ok(Pipeline {
                     piped_processes,
                     tail_process: Some(tail_process),
                     config: PipelineConfig {
@@ -242,7 +242,7 @@ impl Pipeline {
     }
 }
 
-impl JoinHandle {
+impl Pipeline {
     pub fn join(mut self) -> std::io::Result<ExitStatus> {
         // Wait for each process in the pipeline, collecting the first exit status that is not a
         // success if the pipefail flag is enabled.
@@ -310,7 +310,7 @@ impl JoinHandle {
     }
 }
 
-impl Drop for JoinHandle {
+impl Drop for Pipeline {
     fn drop(&mut self) {
         match self.config.on_drop {
             OnDrop::Forget => (),
