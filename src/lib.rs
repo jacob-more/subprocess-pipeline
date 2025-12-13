@@ -1,7 +1,10 @@
 use std::{
     ffi::OsStr,
     path::Path,
-    process::{Child, Command, CommandArgs, CommandEnvs, ExitStatus, Output, Stdio},
+    process::{
+        Child, ChildStderr, ChildStdin, ChildStdout, Command, CommandArgs, CommandEnvs, ExitStatus,
+        Output, Stdio,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,6 +41,10 @@ pub struct JoinHandle {
     // Not actually optional. This is needed because it implements drop.
     tail_process: Option<Child>,
     config: PipelineConfig,
+
+    pub stdin: Option<ChildStdin>,
+    pub stdout: Option<ChildStdout>,
+    pub stderr: Option<ChildStderr>,
 }
 
 impl PipelineConfigBuilder {
@@ -183,14 +190,26 @@ impl Pipeline {
             self.tail_command.stdout(stdout);
         }
         match self.tail_command.spawn() {
-            Ok(tail_process) => Ok(JoinHandle {
-                piped_processes,
-                tail_process: Some(tail_process),
-                config: PipelineConfig {
-                    pipefail: self.config.pipefail,
-                    on_drop: self.config.on_drop,
-                },
-            }),
+            Ok(mut tail_process) => {
+                let stdin = piped_processes
+                    .first_mut()
+                    .unwrap_or(&mut tail_process)
+                    .stdin
+                    .take();
+                let stdout = tail_process.stdout.take();
+                let stderr = tail_process.stderr.take();
+                Ok(JoinHandle {
+                    piped_processes,
+                    tail_process: Some(tail_process),
+                    config: PipelineConfig {
+                        pipefail: self.config.pipefail,
+                        on_drop: self.config.on_drop,
+                    },
+                    stdin,
+                    stdout,
+                    stderr,
+                })
+            }
             Err(error) => {
                 post_error_wait_all(piped_processes);
                 Err(error)
@@ -271,6 +290,7 @@ impl JoinHandle {
                 first_err_status = Some(result);
             }
         }
+        self.tail_process.as_mut().unwrap().stdout = self.stdout.take();
         let output = self.tail_process.take().unwrap().wait_with_output();
         // We've already waited on all the exit codes. No reason to do it again on Drop.
         self.config.on_drop = OnDrop::Forget;
