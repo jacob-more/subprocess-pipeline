@@ -171,7 +171,15 @@ impl CommandPipeline {
                     command.stdin(last_stdout);
                 }
                 command.stdout(Stdio::piped());
-                let mut process = command.spawn()?;
+                let mut process = match command.spawn() {
+                    Ok(process) => process,
+                    Err(error) => {
+                        // If spawn fails, we need to replace the stdin of the failed command so
+                        // that any processes that come before it get the correct signals and exit.
+                        command.stdin(Stdio::inherit());
+                        return Err(error);
+                    }
+                };
                 last_stdout = process.stdout.take();
                 piped_processes.push(process);
             }
@@ -211,6 +219,9 @@ impl CommandPipeline {
                 })
             }
             Err(error) => {
+                // If spawn fails, we need to replace the stdin of the failed command so that any
+                // processes that come before it get the correct signals and exit.
+                self.tail_command.stdin(Stdio::inherit());
                 post_error_wait_all(piped_processes);
                 Err(error)
             }
